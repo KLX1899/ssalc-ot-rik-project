@@ -11,11 +11,12 @@ dotenv.load_dotenv()
 STATE_PATH = Path("state.json")
 
 # Get credentials from environment variables
-USERNAME = os.environ.get("USERNAME")
-PASSWORD = os.environ.get("PASSWORD")
+USERNAME = os.environ.get("LMS_USERNAME")
+PASSWORD = os.environ.get("LMS_PASSWORD")
 
-
-
+if not USERNAME or not PASSWORD:
+    print("LMS_USERNAME and LMS_PASSWORD must be set in the .env file!")
+    exit(1)
 
 async def main():
     async with async_playwright() as p:
