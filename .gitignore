@@ -1,0 +1,7 @@
+venv/
+*.yaml
+__pycache__*
+
+.env
+*.env*
+state.json
