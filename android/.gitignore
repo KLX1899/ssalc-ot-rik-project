@@ -1,0 +1,112 @@
+# Built application files
+*.apk
+*.aab
+*.ap_
+
+# ART/Dalvik VM files
+*.dex
+
+# Java/Kotlin compiled files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+build/
+app/build/
+*/build/
+
+# Gradle files
+.gradle/
+gradle-app.setting
+!gradle-wrapper.jar
+
+# Local configuration file
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Keystore files
+*.jks
+*.keystore
+*.pem
+
+# Log files
+*.log
+
+# Android Studio captures
+captures/
+
+# Navigation editor temp files
+.navigation/
+
+# External native build
+.externalNativeBuild/
+.cxx/
+
+# Google Services
+google-services.json
+
+# Firebase Crashlytics
+com_crashlytics_export_strings.xml
+
+# NDK
+obj/
+
+# Kotlin
+.kotlin/
+
+# macOS
+.DS_Store
+
+# Linux
+*~
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# VSCode
+.vscode/
+
+# Temporary files
+tmp/
+temp/
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output/
+
+# Android profiling
+*.hprof
+
+# JetBrains
+.idea_modules/
+
+# Emulator snapshots
+.snapshots/
+
+# Room database schemas (optional)
+# schemas/
+
+# Secrets/env files
+.env
+.env.*
+secret.properties
+
+# Firebase local emulator data
+firebase-export/
+
+# Compose compiler reports
+compose_compiler/
+
+# KSP
+build/generated/ksp/

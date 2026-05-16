@@ -1,9 +1,6 @@
-venv/
-.venv/
-*.yaml
-__pycache__*
-
+.DS_Store
+Thumbs.db
+*.log
 .env
-*.env*
-state.json
-state_nima.json
+.vscode/
+.idea/

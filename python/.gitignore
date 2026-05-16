@@ -1,0 +1,16 @@
+venv/
+.venv/
+*.yaml
+__pycache__*
+
+.env
+*.env*
+state.json
+state_nima.json
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/
