@@ -43,28 +43,27 @@ class AutoJoinService : Service() {
     // ── State machine ─────────────────────────────────────────────────────────
     private enum class FlowState {
         IDLE,
-        NAVIGATING_TO_HOME,    
-        WAITING_SSO_BUTTON,    
-        WAITING_CAS_PAGE,      
-        ON_CAS_PAGE,           
-        WAITING_POST_LOGIN,    
-        LMS_DASHBOARD,         
-        LMS_COURSE_PAGE,       
-        LMS_BBB_JOINING,       
-        NIMA_DASHBOARD,        
-        NIMA_BBB_JOINING,      
+        NAVIGATING_TO_HOME,
+        WAITING_SSO_BUTTON,
+        WAITING_CAS_PAGE,
+        ON_CAS_PAGE,
+        WAITING_POST_LOGIN,
+        LMS_PAGE,
+        LMS_BBB_JOINING,
+        NIMA_DASHBOARD,
+        NIMA_BBB_JOINING,
     }
 
     private var flowState = FlowState.IDLE
     private var activeSpec: ClassSpec? = null
     private var refreshCount = 0
-    private val maxRefreshes = 30   
+    private val maxRefreshes = 30
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingReloadRunnable: Runnable? = null
 
     private var casInjectedForUrl: String? = null
-    
+
     // Pre-loaded credentials
     private var savedUsername = ""
     private var savedPassword = ""
@@ -88,9 +87,10 @@ class AutoJoinService : Service() {
 
     fun getFullLogs(): String =
         if (logHistory.isEmpty()) "System idle..." else logHistory.joinToString("\n")
-        
+
     fun isIdle() = flowState == FlowState.IDLE
     fun triggerTestLogin() = testLogin()
+    fun getCurrentUrl(): String? = webView.url
 
     inner class LocalBinder : Binder() {
         fun getService(): AutoJoinService = this@AutoJoinService
@@ -146,11 +146,11 @@ class AutoJoinService : Service() {
         }
         webView.destroy()
     }
-    
+
     // =========================================================================
     //  Credentials Pre-loading
     // =========================================================================
-    
+
     private fun loadCredentials(): Boolean {
         val prefs = getSharedPreferences("LMS_PREFS", Context.MODE_PRIVATE)
         savedUsername = prefs.getString("USERNAME", "") ?: ""
@@ -265,7 +265,7 @@ class AutoJoinService : Service() {
             log("⚠️ Test login failed: No credentials saved!")
             return
         }
-        
+
         activeSpec        = null
         casInjectedForUrl = null
         flowState         = FlowState.NAVIGATING_TO_HOME
@@ -310,12 +310,12 @@ class AutoJoinService : Service() {
                     super.onProgressChanged(view, newProgress)
                     pageLoadProgressListener?.invoke(newProgress)
                 }
-                
+
                 override fun onPermissionRequest(request: PermissionRequest) {
                     request.grant(request.resources)
                     log("🎤 Granted WebRTC permissions.")
                 }
-                
+
                 override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
                     if (msg.message().startsWith("[AUT]")) {
                         log("   JS: ${msg.message().removePrefix("[AUT] ")}")
@@ -373,10 +373,9 @@ class AutoJoinService : Service() {
 
     private fun isCasUrl(url: String) = url.contains("cas.aut.ac.ir") || url.contains("/cas/login")
     private fun isLoginIndexPage(url: String) = url.contains("login/index.php")
-    private fun isLmsDashboard(url: String) = url.contains("lmshome.aut.ac.ir") && url.contains("panel/home")
+    private fun isLmsPage(url: String) = url.contains("lmshome.aut.ac.ir") && !url.contains("login") && !url.contains("auth/logout")
     private fun isNimaDashboard(url: String) = url.contains("lms.aut.ac.ir") && url.contains("users-panel")
     private fun isBbbPage(url: String) = url.contains("html5client") || url.contains("/bbb/") || url.contains("greenlight")
-    private fun isCourseViewPage(url: String) = url.contains("course/view.php")
 
     // =========================================================================
     //  Main page-load handler
@@ -396,20 +395,15 @@ class AutoJoinService : Service() {
                 log("🔑 CAS page detected. Injecting credentials...")
                 injectCasCredentials()
             }
-            isLmsDashboard(url) -> {
-                flowState = FlowState.LMS_DASHBOARD
-                log("✅ LMS Dashboard reached!")
-                if (activeSpec?.platform == "LMS") navigateToLmsCourse()
+            isLmsPage(url) -> {
+                flowState = FlowState.LMS_PAGE
+                log("✅ LMS Page reached! Scanning for class...")
+                if (activeSpec?.platform == "LMS") handleLmsPage()
             }
             isNimaDashboard(url) -> {
                 flowState = FlowState.NIMA_DASHBOARD
                 log("✅ NIMA Dashboard reached!")
                 if (activeSpec?.platform == "NIMA") scanNimaOngoingMeetings()
-            }
-            isCourseViewPage(url) -> {
-                flowState = FlowState.LMS_COURSE_PAGE
-                log("📖 Course page loaded. Scanning for join button...")
-                scanLmsJoinButton()
             }
             isBbbPage(url) -> {
                 flowState = FlowState.LMS_BBB_JOINING
@@ -483,7 +477,6 @@ class AutoJoinService : Service() {
                                 submitBtn.click();
                             } 
                             
-                            // Safe fallback: 500ms later, if we haven't navigated away, force form submit
                             setTimeout(function() {
                                 if (form) {
                                     console.log('[AUT] Forcing form.submit() as fallback...');
@@ -500,65 +493,96 @@ class AutoJoinService : Service() {
     }
 
     // =========================================================================
-    //  Step 3a & 4: LMS Dashboard -> Course List -> Meeting Table
+    //  Step 3 & 4: LMS Dashboard & Meeting Page
     // =========================================================================
 
-    private fun navigateToLmsCourse() {
+    private fun handleLmsPage() {
         val safeName = activeSpec!!.name.replace("'", "\\'")
-        val js = """
-            (function() {
-                var iv = setInterval(function() {
-                    var links = document.querySelectorAll('a.course-link, a[href*="course/view.php"]');
-                    for (var i = 0; i < links.length; i++) {
-                        if (links[i].textContent.includes('$safeName') || links[i].title.includes('$safeName')) {
-                            clearInterval(iv);
-                            console.log('[AUT] LMS Course found! Clicking...');
-                            links[i].click();
-                            return;
-                        }
-                    }
-                }, 1000);
-            })();
-        """.trimIndent()
-        webView.evaluateJavascript(js, null)
-    }
-
-    private fun scanLmsJoinButton() {
         val startTime = activeSpec!!.startTime
+
         val js = """
             (function() {
                 var iv = setInterval(function() {
-                    var rows = document.querySelectorAll('tr');
-                    var targetRow = null;
-                    
-                    for (var i = 0; i < rows.length; i++) {
-                        if (rows[i].textContent.includes('$startTime')) {
-                            targetRow = rows[i];
-                            break;
+                    // Scenario A: Are we on the Meeting Details Table?
+                    var rows = document.querySelectorAll('table tbody tr[role="row"]');
+                    if (rows.length > 0) {
+                        var targetRow = null;
+                        for (var i = 0; i < rows.length; i++) {
+                            if (rows[i].textContent.includes('$startTime')) {
+                                targetRow = rows[i];
+                                break;
+                            }
                         }
-                    }
-                    
-                    if (!targetRow) return;
-                    
-                    if (targetRow.textContent.includes('هنوز برگزار نشده')) {
-                        clearInterval(iv);
-                        console.log('[AUT] Class not started yet. Will retry...');
-                        window._autNeedReload = true;
-                        return;
-                    }
-                    
-                    var btns = targetRow.querySelectorAll('button, a.btn');
-                    for (var j = 0; j < btns.length; j++) {
-                        var text = btns[j].textContent || '';
-                        if (text.includes('ورود به جلسه') || text.includes('بیگبلوباتن') || text.includes('Join')) {
-                            if (!btns[j].disabled) {
+                        
+                        if (targetRow) {
+                            if (targetRow.textContent.includes('هنوز برگزار نشده') || targetRow.textContent.includes('پیش از موعد')) {
                                 clearInterval(iv);
-                                console.log('[AUT] BBB Join button clicked!');
-                                btns[j].click();
+                                console.log('[AUT] Class not started yet. Will retry...');
+                                window._autNeedReload = true;
                                 return;
+                            }
+                            
+                            // On mobile, DataTables hides the button and needs a tap to expand.
+                            if (!targetRow.classList.contains('parent')) {
+                                var firstCell = targetRow.querySelector('td.sorting_1') || targetRow.querySelector('td');
+                                if (firstCell) {
+                                    console.log('[AUT] Tapping row to expand mobile view...');
+                                    firstCell.click();
+                                }
+                                return; 
+                            }
+                            
+                            // If it IS expanded, the button is inside the NEXT row which has the class 'child'
+                            var childRow = targetRow.nextElementSibling;
+                            if (childRow && childRow.classList.contains('child')) {
+                                var childBtn = getJoinButton(childRow);
+                                if (childBtn) {
+                                    clearInterval(iv);
+                                    console.log('[AUT] BBB Join button clicked from expanded child row!');
+                                    childBtn.click();
+                                    return;
+                                }
+                            } else {
+                                // Desktop view fallback (not collapsed)
+                                var desktopBtn = getJoinButton(targetRow);
+                                if (desktopBtn) {
+                                    clearInterval(iv);
+                                    console.log('[AUT] BBB Join button clicked from desktop view!');
+                                    desktopBtn.click();
+                                    return;
+                                }
                             }
                         }
                     }
+                    
+                    // Scenario B: Are we on the Dashboard Course List?
+                    var courseLinks = document.querySelectorAll('a.course-link, a[href*="lesson"], a[href*="course"], a h5');
+                    for (var i = 0; i < courseLinks.length; i++) {
+                        var text = courseLinks[i].textContent || '';
+                        var title = courseLinks[i].title || '';
+                        if (text.includes('$safeName') || title.includes('$safeName')) {
+                            clearInterval(iv);
+                            console.log('[AUT] LMS Course found on dashboard! Clicking...');
+                            var linkToClick = courseLinks[i].closest('a') || courseLinks[i];
+                            linkToClick.click();
+                            return;
+                        }
+                    }
+                    
+                    // Helper to find the actual join button inside a specific container
+                    function getJoinButton(container) {
+                        var btns = container.querySelectorAll('button, a.btn');
+                        for (var j = 0; j < btns.length; j++) {
+                            var text = btns[j].textContent || '';
+                            if (text.includes('ورود به جلسه') || text.includes('بیگبلوباتن') || text.includes('Join')) {
+                                if (!btns[j].disabled && btns[j].offsetParent !== null) {
+                                    return btns[j];
+                                }
+                            }
+                        }
+                        return null;
+                    }
+                    
                 }, 1000);
             })();
         """.trimIndent()
@@ -616,7 +640,7 @@ class AutoJoinService : Service() {
             webView.evaluateJavascript("window._autNeedReload === true ? 'RELOAD' : 'OK'") { result ->
                 if (result?.contains("RELOAD") == true) {
                     webView.evaluateJavascript("window._autNeedReload = false;", null)
-                    scheduleReload(60_000L) // Refresh every 60s
+                    scheduleReload(60_000L)
                 }
             }
         }, 15_000L)
@@ -635,16 +659,14 @@ class AutoJoinService : Service() {
                     
                     var btns = overlay.querySelectorAll('button');
                     for (var i = 0; i < btns.length; i++) {
-                        var txt = btns[i].textContent || '';
-                        var label = btns[i].getAttribute('aria-label') || '';
-                        var classes = btns[i].className || '';
+                        var txt = (btns[i].textContent || '').trim();
+                        var label = (btns[i].getAttribute('aria-label') || '').trim();
                         
-                        if (txt.includes('شنیدن') || txt.includes('Listen') || 
-                            label.includes('شنیدن') || label.includes('Listen') ||
-                            classes.includes('listen')) {
+                        if (txt.includes('شنونده') || txt.includes('Listen') || 
+                            label.includes('شنونده') || label.includes('Listen')) {
                             
                             clearInterval(iv);
-                            console.log('[AUT] BBB Listen-only button clicked!');
+                            console.log('[AUT] Found listen-only button: ' + (txt || label));
                             btns[i].click();
                             return;
                         }
@@ -686,28 +708,37 @@ class AutoJoinService : Service() {
     // =========================================================================
 
     fun attachToActivity(container: ViewGroup) {
+        // If it's currently held by WindowManager, release it that way —
+        // its parent is a ViewRootImpl, NOT a ViewGroup, so we must never
+        // cast webView.parent when isWebViewInBackground is true.
         if (isWebViewInBackground) {
             try { windowManager.removeViewImmediate(webView) } catch (_: Exception) {}
             isWebViewInBackground = false
+        } else {
+            // Attached to an activity ViewGroup (or nowhere); safe to remove
+            // via the parent reference using safe-cast to avoid any crash.
+            (webView.parent as? ViewGroup)?.removeView(webView)
         }
-        if (webView.parent != null) (webView.parent as ViewGroup).removeView(webView)
         webView.layoutParams = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         )
-        // Add at index 0 so it stays UNDER the ProgressBar!
+        // Add underneath the progress bar (index 0)
         container.addView(webView, 0)
     }
 
     fun attachToBackground() {
-        if (webView.parent != null) (webView.parent as ViewGroup).removeView(webView)
-        if (!isWebViewInBackground) {
-            try {
-                webView.layoutParams = backgroundLayoutParams
-                windowManager.addView(webView, backgroundLayoutParams)
-                isWebViewInBackground = true
-            } catch (_: Exception) {}
+        if (isWebViewInBackground) {
+            // Already in the background overlay — nothing to do.
+            return
         }
+        // Attached to an activity ViewGroup (or detached); safe to cast.
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        try {
+            webView.layoutParams = backgroundLayoutParams
+            windowManager.addView(webView, backgroundLayoutParams)
+            isWebViewInBackground = true
+        } catch (_: Exception) {}
     }
 
     // =========================================================================
@@ -728,9 +759,11 @@ class AutoJoinService : Service() {
             .setSmallIcon(android.R.drawable.ic_menu_agenda)
             .setOngoing(true)
             .build()
-            
+
         try {
-            // Android 14+ requires foregroundType defined in startForeground
+            // Use MEDIA_PLAYBACK on API 29+ — it matches the manifest declaration,
+            // covers WebRTC audio in BBB sessions, and does NOT require Play Store
+            // review (unlike SPECIAL_USE) or extra permissions (unlike DATA_SYNC).
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
             } else {
