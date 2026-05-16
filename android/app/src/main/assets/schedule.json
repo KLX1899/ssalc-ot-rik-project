@@ -1,0 +1,58 @@
+[
+  {
+    "name": "انقلاب اسلامي ايران",
+    "days": ["sat"],
+    "start": "10:00",
+    "end": "12:00",
+    "platform": "NIMA"
+  },
+  {
+    "name": "شبکه‌هاي کامپيوتري",
+    "days": ["sat", "mon"],
+    "start": "15:00",
+    "end": "16:30",
+    "platform": "LMS"
+  },
+  {
+    "name": "آزمايشگاه شبکه‌هاي کامپيوتري",
+    "days": ["sat"],
+    "start": "08:00",
+    "end": "10:00",
+    "platform": "NIMA"
+  },
+  {
+    "name": "روش پژوهش و ارائه",
+    "days": ["mon"],
+    "start": "16:30",
+    "end": "18:00",
+    "platform": "LMS"
+  },
+  {
+    "name": "سيستم‌هاي نهفته و بي‌درنگ",
+    "days": ["sun", "tue"],
+    "start": "15:00",
+    "end": "16:30",
+    "platform": "LMS"
+  },
+  {
+    "name": "مباني هوش محاسباتي",
+    "days": ["sun", "tue"],
+    "start": "18:00",
+    "end": "19:30",
+    "platform": "LMS"
+  },
+  {
+    "name": "برنامه سازي موبايل",
+    "days": ["sat", "mon"],
+    "start": "13:30",
+    "end": "15:00",
+    "platform": "LMS"
+  },
+  {
+    "name": "معماري كامپيوتر پيشرفته",
+    "days": ["sun", "tue"],
+    "start": "13:30",
+    "end": "15:00",
+    "platform": "LMS"
+  }
+]

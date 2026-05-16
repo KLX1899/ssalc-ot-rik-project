@@ -4,3 +4,8 @@ Thumbs.db
 .env
 .vscode/
 .idea/
+.venv/
+venv/
+__pycache__/
+venv/
+.venv/

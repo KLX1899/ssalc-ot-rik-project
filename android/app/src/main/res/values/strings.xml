@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LMS Auto Joiner</string>
+    
+    <!-- Credential UI -->
+    <string name="credential_title">🔐 LMS Credentials</string>
+    <string name="credential_status_saved">Saved — User: %1$s  |  Pass: %2$s</string>
+    <string name="credential_status_empty">No credentials saved — tap Edit to add them</string>
+    <string name="btn_edit">Edit</string>
+    <string name="btn_setup">Set Up</string>
+    <string name="btn_save">Save</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="hint_username">Student ID / Username</string>
+    <string name="hint_password">Password</string>
+    <string name="both_fields_required">Both fields are required!</string>
+    <string name="credentials_saved">✅ Credentials Saved</string>
+    <string name="enter_credentials_prompt">Please enter your LMS credentials to get started</string>
+    
+    <!-- Biometric -->
+    <string name="biometric_title">Verify Your Identity</string>
+    <string name="biometric_subtitle">Authenticate to view or edit LMS credentials</string>
+    <string name="auth_error">Authentication error: %1$s</string>
+    <string name="auth_failed">Authentication failed — try again</string>
+    
+    <!-- Permissions -->
+    <string name="permission_required">Permission required for background classes!</string>
+    <string name="allow_overlay">Please allow \'Display over other apps\'</string>
+    
+    <!-- WebView -->
+    <string name="live_class_view">Live Class View</string>
+    <string name="waiting_for_service">Waiting for Background Service…</string>
+    <string name="system_idle">System idle…</string>
+    <string name="save_settings">Save Settings</string>
+</resources>
