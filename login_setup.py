@@ -18,9 +18,10 @@ if not USERNAME or not PASSWORD:
     print("LMS_USERNAME and LMS_PASSWORD must be set in the .env file!")
     exit(1)
 
+
 async def main():
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False) # Keep False so you can see it work
+        browser = await p.chromium.launch(headless=False)
         context = await browser.new_context()
         page = await context.new_page()
 
@@ -53,6 +54,7 @@ async def main():
         print(f"✅ Logged in successfully! Session saved to {STATE_PATH.resolve()}")
 
         await browser.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
