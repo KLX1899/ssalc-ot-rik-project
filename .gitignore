@@ -6,3 +6,4 @@ __pycache__*
 .env
 *.env*
 state.json
+state_nima.json

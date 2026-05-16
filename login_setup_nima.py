@@ -8,50 +8,58 @@ import dotenv
 dotenv.load_dotenv()
 
 STATE_PATH = Path("state_nima.json")
+LOGIN_URL  = "https://lms.aut.ac.ir/"
+AFTER_URL  = "**/users-panel/**"
 
-USERNAME = os.environ.get("LMS_USERNAME")
-PASSWORD = os.environ.get("LMS_PASSWORD")
 
-if not USERNAME or not PASSWORD:
-    print("LMS_USERNAME and LMS_PASSWORD must be set in the .env file!")
-    exit(1)
+def get_credentials():
+    username = os.environ.get("LMS_USERNAME")
+    password = os.environ.get("LMS_PASSWORD")
+    if not username or not password:
+        raise RuntimeError(
+            "LMS_USERNAME and LMS_PASSWORD must be set in the .env file!"
+        )
+    return username, password
+
+
+async def do_login_nima(headless: bool = False) -> None:
+    """
+    Performs a full CAS SSO login for the NIMA (lms.aut.ac.ir) platform
+    and saves the session to state_nima.json.
+    Can be called from other modules — not just from __main__.
+    """
+    username, password = get_credentials()
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=headless)
+        context = await browser.new_context()
+        page    = await context.new_page()
+
+        print("[NIMA Login] Navigating to https://lms.aut.ac.ir/ ...")
+        await page.goto(LOGIN_URL)
+
+        print("[NIMA Login] Waiting for redirect to login page...")
+        await page.wait_for_url("**/login/index.php**", timeout=15_000)
+
+        print("[NIMA Login] Clicking SSO button...")
+        await page.get_by_text("ورود با سامانه یکپارچه", exact=False).click()
+
+        print("[NIMA Login] Filling credentials...")
+        await page.locator("#username").fill(username)
+        await page.locator("#password").fill(password)
+        await page.locator("#password").press("Enter")
+
+        print("[NIMA Login] Waiting for NIMA panel...")
+        await page.wait_for_url(AFTER_URL, timeout=30_000)
+
+        await context.storage_state(path=str(STATE_PATH))
+        print(f"[NIMA Login] ✅ Session saved to {STATE_PATH.resolve()}")
+
+        await browser.close()
 
 
 async def main():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
-        context = await browser.new_context()
-        page = await context.new_page()
-
-        # 1. Go to lms.aut.ac.ir — it redirects to courses.aut.ac.ir/login/index.php
-        print("Navigating to https://lms.aut.ac.ir/ ...")
-        await page.goto("https://lms.aut.ac.ir/")
-
-        # 2. Wait for the redirect to the login page
-        print("Waiting for redirect to login page...")
-        await page.wait_for_url("**/login/index.php**", timeout=15_000)
-
-        # 3. Click the SSO button (same as LMS)
-        print("Clicking 'ورود با سامانه یکپارچه' (SSO)...")
-        await page.get_by_text("ورود با سامانه یکپارچه", exact=False).click()
-
-        # 4. Wait for CAS and fill credentials
-        print("Waiting for CAS login page...")
-        await page.locator("#username").fill(USERNAME)
-        await page.locator("#password").fill(PASSWORD)
-
-        print("Submitting credentials...")
-        await page.locator("#password").press("Enter")
-
-        # 5. Wait to be redirected to the NIMA announcements panel
-        print("Waiting for redirect to NIMA panel...")
-        await page.wait_for_url("**/users-panel/**", timeout=30_000)
-
-        # Save cookies & auth state
-        await context.storage_state(path=str(STATE_PATH))
-        print(f"✅ Logged in to NIMA successfully! Session saved to {STATE_PATH.resolve()}")
-
-        await browser.close()
+    await do_login_nima(headless=False)
 
 
 if __name__ == "__main__":

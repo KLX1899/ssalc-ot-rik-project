@@ -5,21 +5,49 @@ from dataclasses import dataclass
 from pathlib import Path
 from playwright.async_api import async_playwright, TimeoutError as PWTimeoutError
 
+# Imported lazily inside functions to avoid circular imports at module level
 STATE_PATH_LMS  = Path("state.json")
 STATE_PATH_NIMA = Path("state_nima.json")
 
 DASHBOARD_URL_LMS  = "https://lmshome.aut.ac.ir/panel/home"
 DASHBOARD_URL_NIMA = "https://lms.aut.ac.ir/users-panel/announcements-list"
 
-NOT_STARTED_REFRESH_INTERVAL = 60  # 1 minute
+NOT_STARTED_REFRESH_INTERVAL = 60  # seconds
 
 
 @dataclass(frozen=True)
 class ClassSpec:
     name: str
-    start_time: str       # e.g. "08:00"
-    end_time: str = ""    # e.g. "10:00"
-    platform: str = "LMS" # "LMS" or "NIMA"
+    start_time: str        # e.g. "08:00"
+    end_time: str  = ""    # e.g. "10:00"
+    platform: str  = "LMS" # "LMS" or "NIMA"
+
+
+# =============================================================================
+#  LOGIN HELPERS  (thin wrappers — real logic lives in login_setup*.py)
+# =============================================================================
+
+async def _ensure_logged_in(spec: ClassSpec, headless: bool = False) -> None:
+    """
+    Checks whether a valid state file exists. If not, runs the appropriate
+    login flow automatically.
+    """
+    is_nima    = spec.platform.upper() == "NIMA"
+    state_path = STATE_PATH_NIMA if is_nima else STATE_PATH_LMS
+
+    if not state_path.exists():
+        print(f"[{spec.name}] ⚠️  {state_path} not found — logging in automatically...")
+        await _do_login(is_nima, headless)
+
+
+async def _do_login(is_nima: bool, headless: bool = False) -> None:
+    """Calls the correct login coroutine from the login_setup modules."""
+    if is_nima:
+        from login_setup_nima import do_login_nima
+        await do_login_nima(headless=headless)
+    else:
+        from login_setup import do_login_lms
+        await do_login_lms(headless=headless)
 
 
 # =============================================================================
@@ -28,10 +56,7 @@ class ClassSpec:
 
 async def _lms_try_find_join_button(page, spec: ClassSpec):
     """
-    Scans the LMS course page for a BBB join button in the row that matches
-    spec.start_time.
-
-    Returns one of:
+    Returns:
       ("found",       button_locator)
       ("not_started", None)
       ("missing",     None)
@@ -61,8 +86,9 @@ async def _lms_try_find_join_button(page, spec: ClassSpec):
 async def _lms_navigate_to_course(page, spec: ClassSpec) -> bool:
     try:
         await page.goto(DASHBOARD_URL_LMS)
-        await page.locator("a.course-link").first.wait_for(state="visible", timeout=15_000)
-
+        await page.locator("a.course-link").first.wait_for(
+            state="visible", timeout=15_000
+        )
         link = page.locator("a.course-link").filter(has_text=spec.name).first
         await link.wait_for(state="visible", timeout=10_000)
         await link.click()
@@ -79,16 +105,13 @@ async def _lms_navigate_to_course(page, spec: ClassSpec) -> bool:
 # =============================================================================
 
 async def _nima_navigate_to_dashboard(page, spec: ClassSpec) -> bool:
-    """Navigate (or re-navigate) to the NIMA ongoing-meetings panel."""
     try:
         await page.goto(DASHBOARD_URL_NIMA, wait_until="domcontentloaded")
-        # Wait for the Angular app to finish rendering the ongoing-meetings table
         await page.wait_for_selector(
             "app-users-panel-ongoing-meetings",
             state="attached",
             timeout=20_000,
         )
-        # Give Angular a moment to populate rows
         await asyncio.sleep(3)
         print(f"[{spec.name}] Navigated to NIMA dashboard.")
         return True
@@ -99,95 +122,65 @@ async def _nima_navigate_to_dashboard(page, spec: ClassSpec) -> bool:
 
 async def _nima_try_find_join_button(page, spec: ClassSpec):
     """
-    Reads the real HTML structure of lms.aut.ac.ir.
+    Matches the active-session table row by time range, then finds the
+    ورود (join) button inside it.
 
-    The ongoing-meetings section is:
-      app-users-panel-ongoing-meetings
-        p-table
-          tbody.p-datatable-tbody
-            tr   ← one per active session
-              td  → <button name="join">ورود</button>
-              td  → <div class="p-text-nowrap p-text-truncate"> CLASS NAME </div>
-              td  → time range e.g. " 08:00 - 10:00 "
-              td  → date
-              ...
-
-    Matching strategy (most reliable → least reliable):
-      1. Primary  : match row by time range  "HH:MM - HH:MM"
-      2. Secondary: also verify the class name fragment is somewhere in the row
-                    (guards against two classes at the same hour)
-
-    Returns one of:
+    Returns:
       ("found",       button_locator)
-      ("not_started", None)   — table exists but our row is absent / button disabled
-      ("missing",     None)   — the whole ongoing-meetings table is not rendered yet
+      ("not_started", None)
+      ("missing",     None)
     """
     try:
-        # 1. Wait for Angular to render the component (non-blocking — already
-        #    waited in navigate, but re-check cheaply here)
         ongoing = page.locator("app-users-panel-ongoing-meetings")
         if await ongoing.count() == 0:
-            print(f"[{spec.name}] NIMA: app-users-panel-ongoing-meetings not found.")
+            print(f"[{spec.name}] NIMA: ongoing-meetings component not found.")
             return ("missing", None)
 
-        # 2. Build the time-range string the way NIMA renders it
-        #    The <td> contains " 08:00 - 10:00 " (spaces around the dash)
         time_range = f"{spec.start_time} - {spec.end_time}"
-
-        # 3. Get all <tr> rows inside the datatable body
-        rows = ongoing.locator("tbody.p-datatable-tbody tr")
-        row_count = await rows.count()
+        rows       = ongoing.locator("tbody.p-datatable-tbody tr")
+        row_count  = await rows.count()
 
         if row_count == 0:
-            print(f"[{spec.name}] NIMA: no active sessions in the table.")
+            print(f"[{spec.name}] NIMA: no active sessions.")
             return ("not_started", None)
 
-        print(f"[{spec.name}] NIMA: {row_count} active session(s) found. "
-              f"Looking for time range '{time_range}'...")
+        print(
+            f"[{spec.name}] NIMA: {row_count} active session(s). "
+            f"Looking for '{time_range}'..."
+        )
 
         matched_row = None
         for i in range(row_count):
-            row = rows.nth(i)
-            row_text = await row.inner_text()
+            row      = rows.nth(i)
+            row_text = " ".join((await row.inner_text()).split())
 
-            # Normalise whitespace for comparison
-            row_text_normalised = " ".join(row_text.split())
-
-            # Primary match: time range must be present
-            if time_range not in row_text_normalised:
+            if time_range not in row_text:
                 continue
 
-            # Secondary match: at least a few characters of the course name
-            # Use the first 6 meaningful characters of spec.name as a fragment
-            # (avoids Arabic/Persian normalisation issues completely)
+            # Secondary guard: first 6 chars of spec.name
             name_fragment = spec.name[:6].strip()
-            if name_fragment and name_fragment not in row_text_normalised:
-                print(f"[{spec.name}] NIMA: row time matched but name fragment "
-                      f"'{name_fragment}' not in row text — skipping.")
+            if name_fragment and name_fragment not in row_text:
+                print(
+                    f"[{spec.name}] NIMA: time matched but name fragment "
+                    f"'{name_fragment}' absent — skipping."
+                )
                 continue
 
             matched_row = row
-            print(f"[{spec.name}] NIMA: matched row → {row_text_normalised[:80]}...")
+            print(f"[{spec.name}] NIMA: matched → {row_text[:80]}...")
             break
 
         if matched_row is None:
-            print(f"[{spec.name}] NIMA: no row matched time='{time_range}'.")
+            print(f"[{spec.name}] NIMA: no row matched '{time_range}'.")
             return ("not_started", None)
 
-        # 4. Find the join button inside the matched row
         btn = matched_row.locator('button[name="join"]').first
         if await btn.count() == 0:
-            print(f"[{spec.name}] NIMA: row found but no join button inside it.")
             return ("not_started", None)
 
-        is_visible = await btn.is_visible()
-        is_enabled = await btn.is_enabled()
-
-        if is_visible and is_enabled:
+        if await btn.is_visible() and await btn.is_enabled():
             return ("found", btn)
 
-        print(f"[{spec.name}] NIMA: join button present but "
-              f"visible={is_visible} enabled={is_enabled}.")
         return ("not_started", None)
 
     except Exception as e:
@@ -199,8 +192,12 @@ async def _nima_try_find_join_button(page, spec: ClassSpec):
 #  SHARED HELPERS
 # =============================================================================
 
-async def _handle_bbb_audio(current_page, spec: ClassSpec):
-    """Wait for the BBB audio modal and click 'listen only'."""
+def _is_login_page(url: str) -> bool:
+    """Returns True if the browser has been redirected to the CAS login page."""
+    return "login" in url or "cas" in url
+
+
+async def _handle_bbb_audio(current_page, spec: ClassSpec) -> None:
     try:
         print(f"[{spec.name}] Waiting for BBB audio modal (up to 60 s)...")
         await current_page.wait_for_selector(
@@ -218,10 +215,8 @@ async def _handle_bbb_audio(current_page, spec: ClassSpec):
         await current_page.screenshot(path=f"error_{spec.name}.png")
 
 
-async def _keep_alive_until_class_ends(current_page, spec: ClassSpec):
-    """Keep the browser open until end_time + 5 min, or until page closes."""
-    import datetime
-    import pytz
+async def _keep_alive_until_class_ends(current_page, spec: ClassSpec) -> None:
+    import datetime, pytz
 
     tehran = pytz.timezone("Asia/Tehran")
 
@@ -235,13 +230,13 @@ async def _keep_alive_until_class_ends(current_page, spec: ClassSpec):
 
         wait = (end_dt - datetime.datetime.now(tehran)).total_seconds()
         print(
-            f"[{spec.name}] 🎓 Staying in class until "
+            f"[{spec.name}] 🎓 Staying until "
             f"{end_dt.strftime('%H:%M')} ({int(wait // 60)} min)..."
         )
         await asyncio.sleep(max(wait, 0))
-        print(f"[{spec.name}] ⏰ Class time is over. Closing browser.")
+        print(f"[{spec.name}] ⏰ Class over. Closing browser.")
     else:
-        print(f"[{spec.name}] 🎓 No end_time — keeping browser until page closes...")
+        print(f"[{spec.name}] No end_time — waiting for page to close...")
         try:
             await current_page.wait_for_event("close", timeout=0)
         except Exception:
@@ -256,19 +251,17 @@ async def join_class(
     spec: ClassSpec,
     *,
     max_wait_minutes: int = 15,
-    poll_seconds: int = 20,
+    poll_seconds: int = 20,   # kept for API compatibility
     headless: bool = False,
-):
+) -> None:
     is_nima    = spec.platform.upper() == "NIMA"
     state_path = STATE_PATH_NIMA if is_nima else STATE_PATH_LMS
     deadline   = time.time() + max_wait_minutes * 60
 
-    if not state_path.exists():
-        script = "login_setup_nima.py" if is_nima else "login_setup.py"
-        raise FileNotFoundError(
-            f"{state_path} not found! Please run {script} first."
-        )
+    # ── Step 0: Ensure we are logged in ──────────────────────────────────────
+    await _ensure_logged_in(spec, headless=headless)
 
+    # ── Step 1: Open browser ──────────────────────────────────────────────────
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=headless,
@@ -280,20 +273,41 @@ async def join_class(
         context = await browser.new_context(storage_state=str(state_path))
         page    = await context.new_page()
 
-        # ── Initial navigation ────────────────────────────────────────────
         dashboard = DASHBOARD_URL_NIMA if is_nima else DASHBOARD_URL_LMS
         print(f"[{spec.name}] Platform: {spec.platform}  →  {dashboard}")
+
+        # ── Step 2: Go to dashboard; re-login if session has expired ──────────
         await page.goto(dashboard)
 
-        if "login" in page.url:
+        if _is_login_page(page.url):
+            print(f"[{spec.name}] 🔑 Session expired — re-logging in automatically...")
             await browser.close()
-            script = "login_setup_nima.py" if is_nima else "login_setup.py"
-            raise RuntimeError(f"Session expired! Please re-run {script}.")
+            await _do_login(is_nima, headless=headless)
+
+            # Reload context with the fresh state file
+            browser = await p.chromium.launch(
+                headless=headless,
+                args=[
+                    "--use-fake-ui-for-media-stream",
+                    "--autoplay-policy=no-user-gesture-required",
+                ],
+            )
+            context = await browser.new_context(storage_state=str(state_path))
+            page    = await context.new_page()
+            await page.goto(dashboard)
+
+            # If still on login page after a fresh login, bail out
+            if _is_login_page(page.url):
+                await browser.close()
+                raise RuntimeError(
+                    f"[{spec.name}] Could not log in automatically. "
+                    f"Please check credentials in .env"
+                )
 
         print(f"[{spec.name}] Waiting 10 s before first check...")
         await asyncio.sleep(10)
 
-        # Navigate to the correct starting point
+        # ── Step 3: Navigate to the course / NIMA dashboard ───────────────────
         if is_nima:
             ok = await _nima_navigate_to_dashboard(page, spec)
         else:
@@ -303,7 +317,7 @@ async def join_class(
             await browser.close()
             raise RuntimeError(f"[{spec.name}] Could not reach course page.")
 
-        # ── Poll loop ─────────────────────────────────────────────────────
+        # ── Step 4: Poll loop ─────────────────────────────────────────────────
         attempt    = 0
         last_error = None
 
@@ -311,12 +325,37 @@ async def join_class(
             attempt += 1
             print(f"[{spec.name}] Checking for join button (attempt {attempt})...")
 
+            # Re-check for accidental session expiry mid-poll
+            if _is_login_page(page.url):
+                print(
+                    f"[{spec.name}] 🔑 Session expired mid-session — "
+                    f"re-logging in..."
+                )
+                await browser.close()
+                await _do_login(is_nima, headless=headless)
+
+                browser = await p.chromium.launch(
+                    headless=headless,
+                    args=[
+                        "--use-fake-ui-for-media-stream",
+                        "--autoplay-policy=no-user-gesture-required",
+                    ],
+                )
+                context = await browser.new_context(storage_state=str(state_path))
+                page    = await context.new_page()
+
+                if is_nima:
+                    await _nima_navigate_to_dashboard(page, spec)
+                else:
+                    await _lms_navigate_to_course(page, spec)
+                continue
+
             if is_nima:
                 status, join_button = await _nima_try_find_join_button(page, spec)
             else:
                 status, join_button = await _lms_try_find_join_button(page, spec)
 
-            # ── FOUND ─────────────────────────────────────────────────────
+            # ── FOUND ─────────────────────────────────────────────────────────
             if status == "found":
                 print(f"[{spec.name}] ✅ Join button found! Clicking...")
                 try:
@@ -338,13 +377,12 @@ async def join_class(
                 except Exception as e:
                     last_error = e
                     print(f"[{spec.name}] ⚠️ Error after clicking: {e}")
-                    # fall through to refresh
 
-            # ── NOT STARTED ───────────────────────────────────────────────
+            # ── NOT STARTED ───────────────────────────────────────────────────
             elif status == "not_started":
                 remaining = int(deadline - time.time())
                 print(
-                    f"[{spec.name}] 🕐 Class not started yet. "
+                    f"[{spec.name}] 🕐 Not started yet. "
                     f"Refreshing in {NOT_STARTED_REFRESH_INTERVAL}s "
                     f"(~{remaining}s left)..."
                 )
@@ -359,7 +397,7 @@ async def join_class(
                         await _lms_navigate_to_course(page, spec)
                 continue
 
-            # ── MISSING ───────────────────────────────────────────────────
+            # ── MISSING ───────────────────────────────────────────────────────
             else:
                 remaining = int(deadline - time.time())
                 print(
@@ -374,7 +412,7 @@ async def join_class(
                     await _lms_navigate_to_course(page, spec)
                 continue
 
-        # ── Deadline exceeded ─────────────────────────────────────────────
+        # ── Deadline exceeded ─────────────────────────────────────────────────
         await browser.close()
         raise RuntimeError(
             f"Failed to join {spec.name} after {max_wait_minutes} min"
