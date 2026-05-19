@@ -1,34 +1,61 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">LMS Auto Joiner</string>
-    
+
     <!-- Credential UI -->
-    <string name="credential_title">🔐 LMS Credentials</string>
+    <string name="credential_title">LMS Credentials</string>
     <string name="credential_status_saved">Saved — User: %1$s  |  Pass: %2$s</string>
     <string name="credential_status_empty">No credentials saved — tap Edit to add them</string>
     <string name="btn_edit">Edit</string>
     <string name="btn_setup">Set Up</string>
     <string name="btn_save">Save</string>
     <string name="btn_cancel">Cancel</string>
+    <string name="btn_back">Back</string>
     <string name="hint_username">Student ID / Username</string>
     <string name="hint_password">Password</string>
     <string name="both_fields_required">Both fields are required!</string>
     <string name="credentials_saved">✅ Credentials Saved</string>
     <string name="enter_credentials_prompt">Please enter your LMS credentials to get started</string>
-    
+
     <!-- Biometric -->
     <string name="biometric_title">Verify Your Identity</string>
     <string name="biometric_subtitle">Authenticate to view or edit LMS credentials</string>
     <string name="auth_error">Authentication error: %1$s</string>
     <string name="auth_failed">Authentication failed — try again</string>
-    
+
     <!-- Permissions -->
     <string name="permission_required">Permission required for background classes!</string>
     <string name="allow_overlay">Please allow \'Display over other apps\'</string>
-    
+
     <!-- WebView -->
     <string name="live_class_view">Live Class View</string>
     <string name="waiting_for_service">Waiting for Background Service…</string>
     <string name="system_idle">System idle…</string>
-    <string name="save_settings">Save Settings</string>
+
+    <!-- Class discovery -->
+    <string name="btn_discover_classes">کلاس یابی</string>
+    <string name="btn_manage_classes">مدیریت کلاس</string>
+    <string name="discovering_classes">Discovering classes from LMS…</string>
+    <string name="discovery_needs_credentials">Save your credentials first!</string>
+    <string name="discovery_started">🔍 Class discovery started in background…</string>
+    <string name="discovery_complete">✅ Found %1$d class(es)! Open Manage Classes to review.</string>
+    <string name="discovery_error">❌ Discovery failed. Check logs.</string>
+    <string name="discovery_cancelled">Discovery cancelled.</string>
+    <string name="discovery_progress">Scanning %1$d of %2$d courses…</string>
+    <string name="discovery_in_progress">Discovery already in progress!</string>
+    <string name="discovery_running_bg">Discovery will continue in background.</string>
+
+    <!-- Manage classes screen -->
+    <string name="manage_classes_title">📚 My Classes</string>
+    <string name="no_classes_found">No classes discovered yet.\nUse the کلاس یابی button first.</string>
+    <string name="class_count">%1$d class(es) found</string>
+    <string name="platform_label">Platform:</string>
+    <string name="platform_lms">LMS</string>
+    <string name="platform_nima">NIMA</string>
+    <string name="schedule_saved">✅ Schedule saved! Alarms updated.</string>
+    <string name="no_classes_to_save">No classes to save.</string>
+    
+    <!-- Notification -->
+    <string name="notif_discovering">🔍 Discovering your classes…</string>
+    <string name="notif_discovery_done">✅ Found %1$d class(es)</string>
 </resources>

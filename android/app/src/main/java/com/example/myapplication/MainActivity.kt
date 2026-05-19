@@ -8,13 +8,10 @@ import android.content.ServiceConnection
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
-import android.os.PowerManager
 import android.provider.Settings
-import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -35,11 +32,9 @@ class MainActivity : AppCompatActivity() {
     private var isBound = false
 
     private lateinit var webViewContainer: FrameLayout
-    private lateinit var progressBar: ProgressBar
     private lateinit var tvLogs: TextView
     private lateinit var logScrollView: ScrollView
 
-    // Credential UI
     private lateinit var credentialStatusDot: View
     private lateinit var tvCredentialStatus: TextView
     private lateinit var btnShowCredentials: MaterialButton
@@ -48,22 +43,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etPassword: TextInputEditText
     private lateinit var btnSave: MaterialButton
     private lateinit var btnCancel: MaterialButton
+    private lateinit var btnDiscoverClasses: MaterialButton
+    private lateinit var btnManageClasses: MaterialButton
 
-    // -------------------------------------------------------------------------
-    // FIX: track whether the service has been started at least once this
-    // process lifetime.  The flag lives in a companion object so it survives
-    // onStop/onStart cycles (back-stack, screen-off, recent-apps) without
-    // triggering a redundant startForegroundService() call.
-    // -------------------------------------------------------------------------
-    companion object {
-        private var serviceStarted = false
-    }
+    // Discovery progress UI
+    private lateinit var discoveryProgressSection: LinearLayout
+    private lateinit var tvDiscoveryProgress: TextView
+    private lateinit var btnCancelDiscovery: MaterialButton
 
     private val overlayPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { _ ->
         if (Settings.canDrawOverlays(this)) {
-            startAutoJoinServiceOnce()
+            startAutoJoinService()
         } else {
             Toast.makeText(this, R.string.permission_required, Toast.LENGTH_LONG).show()
         }
@@ -78,24 +70,10 @@ class MainActivity : AppCompatActivity() {
             if (webViewContainer.childCount > 0) {
                 webViewContainer.getChildAt(0).visibility = View.GONE
             }
-
-            // Attach WebView
             autoJoinService?.attachToActivity(webViewContainer)
-
-            // Connect Progress Bar
-            autoJoinService?.pageLoadProgressListener = { progress ->
-                runOnUiThread {
-                    if (progress < 100) {
-                        progressBar.visibility = View.VISIBLE
-                        progressBar.progress = progress
-                    } else {
-                        progressBar.visibility = View.GONE
-                    }
-                }
-            }
-
-            // Connect Logs
             tvLogs.text = autoJoinService?.getFullLogs()
+
+            // Log listener
             autoJoinService?.logUpdateListener = { newLogs ->
                 runOnUiThread {
                     tvLogs.text = newLogs
@@ -103,12 +81,40 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // FIX: Only trigger the test-login on the very first bind (i.e. when
-            // the WebView has never navigated anywhere).  After the user presses
-            // Home / Recents and comes back, the WebView is already showing a page,
-            // so we must NOT restart the flow.
-            if (autoJoinService?.isIdle() == true && autoJoinService?.getCurrentUrl().isNullOrBlank()) {
-                autoJoinService?.triggerTestLogin()
+            // Discovery progress listener
+            autoJoinService?.discoveryProgressListener = { current, total, name ->
+                runOnUiThread {
+                    discoveryProgressSection.visibility = View.VISIBLE
+                    btnDiscoverClasses.isEnabled = false
+                    tvDiscoveryProgress.text = getString(R.string.discovery_progress, current, total)
+                }
+            }
+
+            // Discovery complete listener
+            autoJoinService?.discoveryCompleteListener = { count, success ->
+                runOnUiThread {
+                    discoveryProgressSection.visibility = View.GONE
+                    btnDiscoverClasses.isEnabled = true
+                    if (success && count > 0) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            getString(R.string.discovery_complete, count),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } else if (!success) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            R.string.discovery_cancelled,
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
+
+            // If discovery is already running when we connect, show progress
+            if (autoJoinService?.isDiscovering == true) {
+                discoveryProgressSection.visibility = View.VISIBLE
+                btnDiscoverClasses.isEnabled = false
             }
         }
 
@@ -117,10 +123,6 @@ class MainActivity : AppCompatActivity() {
             autoJoinService = null
         }
     }
-
-    // =========================================================================
-    //  Lifecycle
-    // =========================================================================
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -136,29 +138,22 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        // Find views
-        webViewContainer    = findViewById(R.id.webViewContainer)
-        tvLogs              = findViewById(R.id.tvLogs)
-        logScrollView       = findViewById(R.id.logScrollView)
+        webViewContainer = findViewById(R.id.webViewContainer)
+        tvLogs = findViewById(R.id.tvLogs)
+        logScrollView = findViewById(R.id.logScrollView)
         credentialStatusDot = findViewById(R.id.credentialStatusDot)
-        tvCredentialStatus  = findViewById(R.id.tvCredentialStatus)
-        btnShowCredentials  = findViewById(R.id.btnShowCredentials)
+        tvCredentialStatus = findViewById(R.id.tvCredentialStatus)
+        btnShowCredentials = findViewById(R.id.btnShowCredentials)
         credentialInputSection = findViewById(R.id.credentialInputSection)
-        etUsername          = findViewById(R.id.etUsername)
-        etPassword          = findViewById(R.id.etPassword)
-        btnSave             = findViewById(R.id.btnSave)
-        btnCancel           = findViewById(R.id.btnCancel)
-
-        // Setup the Top Progress Bar for the browser
-        progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                (4 * resources.displayMetrics.density).toInt()
-            ).apply { gravity = Gravity.TOP }
-            max = 100
-            visibility = View.GONE
-        }
-        webViewContainer.addView(progressBar)
+        etUsername = findViewById(R.id.etUsername)
+        etPassword = findViewById(R.id.etPassword)
+        btnSave = findViewById(R.id.btnSave)
+        btnCancel = findViewById(R.id.btnCancel)
+        btnDiscoverClasses = findViewById(R.id.btnDiscoverClasses)
+        btnManageClasses = findViewById(R.id.btnManageClasses)
+        discoveryProgressSection = findViewById(R.id.discoveryProgressSection)
+        tvDiscoveryProgress = findViewById(R.id.tvDiscoveryProgress)
+        btnCancelDiscovery = findViewById(R.id.btnCancelDiscovery)
 
         updateCredentialStatusDisplay()
 
@@ -167,75 +162,82 @@ class MainActivity : AppCompatActivity() {
         btnSave.setOnClickListener {
             val user = etUsername.text.toString().trim()
             val pass = etPassword.text.toString().trim()
-
             if (user.isEmpty() || pass.isEmpty()) {
                 Toast.makeText(this, R.string.both_fields_required, Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-
             getSharedPreferences("LMS_PREFS", Context.MODE_PRIVATE)
-                .edit()
-                .putString("USERNAME", user)
-                .putString("PASSWORD", pass)
-                .apply()
-
+                .edit().putString("USERNAME", user).putString("PASSWORD", pass).apply()
             Toast.makeText(this, R.string.credentials_saved, Toast.LENGTH_SHORT).show()
             hideCredentialInputs()
             updateCredentialStatusDisplay()
-
-            if (autoJoinService?.isIdle() == true && autoJoinService?.getCurrentUrl().isNullOrBlank()) {
-                autoJoinService?.triggerTestLogin()
-            }
         }
 
         btnCancel.setOnClickListener { hideCredentialInputs() }
 
-        // First launch: prompt for credentials
-        val prefs = getSharedPreferences("LMS_PREFS", Context.MODE_PRIVATE)
-        val hasCredentials = !prefs.getString("USERNAME", "").isNullOrEmpty() &&
-                !prefs.getString("PASSWORD", "").isNullOrEmpty()
+        // ── Class Discovery ──────────────────────────────────────────────────
+        btnDiscoverClasses.setOnClickListener {
+            val prefs = getSharedPreferences("LMS_PREFS", Context.MODE_PRIVATE)
+            if (prefs.getString("USERNAME", "").isNullOrEmpty() ||
+                prefs.getString("PASSWORD", "").isNullOrEmpty()
+            ) {
+                Toast.makeText(this, R.string.discovery_needs_credentials, Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
 
-        if (!hasCredentials) {
+            // Check if already running
+            if (autoJoinService?.isDiscovering == true) {
+                Toast.makeText(this, R.string.discovery_in_progress, Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            Toast.makeText(this, R.string.discovery_started, Toast.LENGTH_LONG).show()
+            discoveryProgressSection.visibility = View.VISIBLE
+            btnDiscoverClasses.isEnabled = false
+
+            val intent = Intent(this, AutoJoinService::class.java).apply {
+                putExtra("DISCOVER_CLASSES", true)
+            }
+            startService(intent)
+        }
+
+        // ── Cancel Discovery ─────────────────────────────────────────────────
+        btnCancelDiscovery.setOnClickListener {
+            val intent = Intent(this, AutoJoinService::class.java).apply {
+                putExtra("CANCEL_DISCOVERY", true)
+            }
+            startService(intent)
+            discoveryProgressSection.visibility = View.GONE
+            btnDiscoverClasses.isEnabled = true
+        }
+
+        // ── Manage Classes ───────────────────────────────────────────────────
+        btnManageClasses.setOnClickListener {
+            startActivity(Intent(this, ManageClassesActivity::class.java))
+        }
+
+        // First launch prompt
+        val prefs = getSharedPreferences("LMS_PREFS", Context.MODE_PRIVATE)
+        if (prefs.getString("USERNAME", "").isNullOrEmpty() ||
+            prefs.getString("PASSWORD", "").isNullOrEmpty()
+        ) {
             showCredentialInputs(loadSaved = false)
             Toast.makeText(this, R.string.enter_credentials_prompt, Toast.LENGTH_LONG).show()
         }
 
-        // FIX: Only request permission / start service once per process.
-        // On every subsequent entry (Home, Recents, screen-off) we skip this
-        // entirely — the service is already running as a foreground service.
-        if (!serviceStarted) {
-            checkOverlayPermissionAndStartService()
-        }
-
-        // Ask the user to disable battery optimization so the foreground
-        // service is not killed when the screen turns off (common on OEM ROMs).
-        requestIgnoreBatteryOptimizations()
+        checkOverlayPermissionAndStartService()
     }
 
-    // =========================================================================
-    //  onNewIntent — called when launchMode="singleTop" intercepts a re-launch
-    //  (e.g. tapping the launcher icon while the activity is already on top).
-    //  We override it to do nothing, which is exactly what we want: just bring
-    //  the existing instance to the foreground without restarting anything.
-    // =========================================================================
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        // Intentionally empty — existing state is preserved as-is.
-    }
-
-    // =========================================================================
-    //  Credential display
-    // =========================================================================
+    // ── Credential helpers ───────────────────────────────────────────────────
 
     private fun updateCredentialStatusDisplay() {
         val prefs = getSharedPreferences("LMS_PREFS", Context.MODE_PRIVATE)
-        val user  = prefs.getString("USERNAME", "") ?: ""
-        val pass  = prefs.getString("PASSWORD", "") ?: ""
-
+        val user = prefs.getString("USERNAME", "") ?: ""
+        val pass = prefs.getString("PASSWORD", "") ?: ""
         if (user.isNotEmpty() && pass.isNotEmpty()) {
             credentialStatusDot.setBackgroundResource(R.drawable.status_dot_green)
-            val maskedPass = "\u2022".repeat(pass.length.coerceAtMost(12))
-            tvCredentialStatus.text = getString(R.string.credential_status_saved, user, maskedPass)
+            val masked = "\u2022".repeat(pass.length.coerceAtMost(12))
+            tvCredentialStatus.text = getString(R.string.credential_status_saved, user, masked)
             btnShowCredentials.setText(R.string.btn_edit)
         } else {
             credentialStatusDot.setBackgroundResource(R.drawable.status_dot_red)
@@ -254,26 +256,23 @@ class MainActivity : AppCompatActivity() {
             etPassword.setText("")
         }
         credentialInputSection.visibility = View.VISIBLE
-        btnShowCredentials.visibility     = View.GONE
+        btnShowCredentials.visibility = View.GONE
     }
 
     private fun hideCredentialInputs() {
         credentialInputSection.visibility = View.GONE
-        btnShowCredentials.visibility     = View.VISIBLE
+        btnShowCredentials.visibility = View.VISIBLE
         etPassword.setText("")
     }
 
-    // =========================================================================
-    //  Biometric / Device credential authentication
-    // =========================================================================
+    // ── Biometric ────────────────────────────────────────────────────────────
 
     private fun authenticateAndShowCredentials() {
-        val biometricManager = BiometricManager.from(this)
-        val canAuth = biometricManager.canAuthenticate(
+        val bm = BiometricManager.from(this)
+        when (bm.canAuthenticate(
             BiometricManager.Authenticators.BIOMETRIC_WEAK or
                     BiometricManager.Authenticators.DEVICE_CREDENTIAL
-        )
-        when (canAuth) {
+        )) {
             BiometricManager.BIOMETRIC_SUCCESS -> showBiometricPrompt()
             else -> showCredentialInputs()
         }
@@ -290,8 +289,7 @@ class MainActivity : AppCompatActivity() {
                     errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON
                 ) {
                     Toast.makeText(
-                        this@MainActivity,
-                        getString(R.string.auth_error, errString),
+                        this@MainActivity, getString(R.string.auth_error, errString),
                         Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -300,68 +298,42 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this@MainActivity, R.string.auth_failed, Toast.LENGTH_SHORT).show()
             }
         }
-
-        val prompt     = BiometricPrompt(this, executor, callback)
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle(getString(R.string.biometric_title))
-            .setSubtitle(getString(R.string.biometric_subtitle))
-            .setAllowedAuthenticators(
-                BiometricManager.Authenticators.BIOMETRIC_WEAK or
-                        BiometricManager.Authenticators.DEVICE_CREDENTIAL
-            )
-            .build()
-        prompt.authenticate(promptInfo)
+        BiometricPrompt(this, executor, callback).authenticate(
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle(getString(R.string.biometric_title))
+                .setSubtitle(getString(R.string.biometric_subtitle))
+                .setAllowedAuthenticators(
+                    BiometricManager.Authenticators.BIOMETRIC_WEAK or
+                            BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                )
+                .build()
+        )
     }
 
-    // =========================================================================
-    //  Service management
-    // =========================================================================
+    // ── Service ──────────────────────────────────────────────────────────────
 
     private fun checkOverlayPermissionAndStartService() {
         if (!Settings.canDrawOverlays(this)) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                "package:$packageName".toUri()
+            overlayPermissionLauncher.launch(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:$packageName".toUri())
             )
             Toast.makeText(this, R.string.allow_overlay, Toast.LENGTH_LONG).show()
-            overlayPermissionLauncher.launch(intent)
         } else {
-            startAutoJoinServiceOnce()
+            startAutoJoinService()
         }
     }
 
-    // FIX: renamed from startAutoJoinService() to make the "only once" contract
-    // explicit, and guards with the companion-object flag.
-    private fun startAutoJoinServiceOnce() {
-        if (serviceStarted) return
-        try {
-            val serviceIntent = Intent(this, AutoJoinService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent)
-            } else {
-                startService(serviceIntent)
-            }
-            serviceStarted = true
-        } catch (e: Exception) {
-            Toast.makeText(this, "Failed to start service: ${e.message}", Toast.LENGTH_LONG).show()
-        }
+    private fun startAutoJoinService() {
+        val si = Intent(this, AutoJoinService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(si)
+        else startService(si)
     }
-
-    // =========================================================================
-    //  onStart / onStop — bind/unbind WITHOUT restarting the service
-    // =========================================================================
 
     override fun onStart() {
         super.onStart()
-        // Bind whenever the overlay permission is granted.  BIND_AUTO_CREATE
-        // will restart the service if it was killed (low memory / battery
-        // optimiser), so we no longer gate on the serviceStarted flag here.
         if (Settings.canDrawOverlays(this)) {
-            if (!serviceStarted) {
-                startAutoJoinServiceOnce()
-            }
-            Intent(this, AutoJoinService::class.java).also { intent ->
-                bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            Intent(this, AutoJoinService::class.java).also {
+                bindService(it, connection, Context.BIND_AUTO_CREATE)
             }
         }
     }
@@ -369,35 +341,12 @@ class MainActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         if (isBound) {
-            // Detach listeners and move WebView back to the background overlay
-            // window so it keeps running while the activity is not visible.
-            autoJoinService?.logUpdateListener       = null
-            autoJoinService?.pageLoadProgressListener = null
+            autoJoinService?.logUpdateListener = null
+            autoJoinService?.discoveryProgressListener = null
+            autoJoinService?.discoveryCompleteListener = null
             autoJoinService?.attachToBackground()
             unbindService(connection)
             isBound = false
-            autoJoinService = null
-        }
-    }
-
-    // =========================================================================
-    //  Battery optimisation
-    // =========================================================================
-
-    private fun requestIgnoreBatteryOptimizations() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                try {
-                    val intent = Intent(
-                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                        "package:$packageName".toUri()
-                    )
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    // Some OEMs don't support the direct intent; silently ignore.
-                }
-            }
         }
     }
 }

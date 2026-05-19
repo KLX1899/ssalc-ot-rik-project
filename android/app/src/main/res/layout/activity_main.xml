@@ -1,4 +1,3 @@
-<?xml version="1.0" encoding="utf-8"?>
 <!-- res/layout/activity_main.xml -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -132,6 +131,91 @@
                         app:iconGravity="start"
                         android:text="@string/btn_save" />
                 </LinearLayout>
+            </LinearLayout>
+
+            <!-- Divider -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#E0E0E0"
+                android:layout_marginTop="10dp"
+                android:layout_marginBottom="10dp"/>
+
+            <!-- Action buttons — evenly aligned row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnDiscoverClasses"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    app:cornerRadius="8dp"
+                    app:icon="@drawable/ic_search"
+                    app:iconSize="20dp"
+                    app:iconGravity="textStart"
+                    app:iconPadding="4dp"
+                    android:text="@string/btn_discover_classes"
+                    android:textSize="13sp"
+                    android:maxLines="1"
+                    android:ellipsize="none" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnManageClasses"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="4dp"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    app:cornerRadius="8dp"
+                    app:icon="@drawable/ic_list"
+                    app:iconSize="20dp"
+                    app:iconGravity="textStart"
+                    app:iconPadding="4dp"
+                    android:text="@string/btn_manage_classes"
+                    android:textSize="13sp"
+                    android:maxLines="1"
+                    android:ellipsize="none" />
+            </LinearLayout>
+
+            <!-- Discovery progress (hidden by default) -->
+            <LinearLayout
+                android:id="@+id/discoveryProgressSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginTop="8dp"
+                android:visibility="gone">
+
+                <ProgressBar
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_marginEnd="8dp"
+                    style="?android:attr/progressBarStyleSmall"/>
+
+                <TextView
+                    android:id="@+id/tvDiscoveryProgress"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/discovering_classes"
+                    android:textSize="13sp"
+                    android:textColor="?android:attr/textColorSecondary"/>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCancelDiscovery"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:text="@string/btn_cancel"
+                    android:textSize="12sp"
+                    android:textColor="#F44336"/>
             </LinearLayout>
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
