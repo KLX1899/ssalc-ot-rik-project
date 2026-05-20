@@ -286,7 +286,7 @@ class AutoJoinService : Service() {
         pendingClassEndRunnable = null
     }
 
-    // =========================================================================
+// =========================================================================
     //  When a class ends
     // =========================================================================
 
@@ -295,21 +295,27 @@ class AutoJoinService : Service() {
         cancelClassEndTimer()
         cancelPendingReload()
 
-        flowState = FlowState.IDLE
-        activeSpec = null
-        refreshCount = 0
+        // CRITICAL FIX: Only reset state if we are still actively in the class that just ended.
+        // If the minute-tick timer already transitioned us to the 3 PM class, leave it alone!
+        if (activeSpec?.name == endedSpec.name) {
+            flowState = FlowState.IDLE
+            activeSpec = null
+            refreshCount = 0
 
-        val nextClass = findCurrentlyActiveClass(exclude = endedSpec)
+            val nextClass = findCurrentlyActiveClass(exclude = endedSpec)
 
-        if (nextClass != null) {
-            log("➡️ Next class found: '${nextClass.name}' (${nextClass.startTime}-${nextClass.endTime})")
-            log("🔄 Switching to next class...")
-            mainHandler.postDelayed({ startJoinFlow(nextClass) }, 3_000L)
+            if (nextClass != null) {
+                log("➡️ Next class found: '${nextClass.name}' (${nextClass.startTime}-${nextClass.endTime})")
+                log("🔄 Switching to next class...")
+                mainHandler.postDelayed({ startJoinFlow(nextClass) }, 2_000L)
+            } else {
+                log("💤 No more classes right now. Going idle.")
+                releaseWakeLock()
+                updateNotification("Watching your schedule...")
+                webView.loadUrl("about:blank")
+            }
         } else {
-            log("💤 No more classes right now. Going idle.")
-            releaseWakeLock()
-            updateNotification("Watching your schedule...")
-            webView.loadUrl("about:blank")
+            log("➡️ State already seamlessly transitioned to '${activeSpec?.name}'.")
         }
     }
 
@@ -348,11 +354,17 @@ class AutoJoinService : Service() {
             .minByOrNull { it.startTime }
     }
 
-    // =========================================================================
+// =========================================================================
     //  Force reset
     // =========================================================================
 
     private fun forceResetAndJoin(spec: ClassSpec) {
+        // Prevent double-triggering if the Class End timer already started the transition
+        if (activeSpec?.name == spec.name && flowState != FlowState.IDLE) {
+            log("⚡ Already transitioning to '${spec.name}'. Skipping duplicate reset.")
+            return
+        }
+
         log("⚡ Force-resetting for '${spec.name}'")
         cancelClassEndTimer()
         cancelPendingReload()
@@ -374,12 +386,11 @@ class AutoJoinService : Service() {
         log("🚀 Force-joining '${spec.name}' [${spec.platform}]")
 
         val homeUrl = if (spec.platform == "NIMA") "https://lms.aut.ac.ir/"
-                      else "https://lmshome.aut.ac.ir/"
+        else "https://lmshome.aut.ac.ir/"
 
         flowState = FlowState.NAVIGATING_TO_HOME
         webView.loadUrl(homeUrl)
     }
-
     // =========================================================================
     //  Go To Class — manually triggered
     // =========================================================================
@@ -439,7 +450,14 @@ class AutoJoinService : Service() {
     //  Join flow
     // =========================================================================
 
+
     private fun startJoinFlow(spec: ClassSpec) {
+        // Prevent double-triggering if the Minute-Tick timer already started the transition
+        if (activeSpec?.name == spec.name && flowState != FlowState.IDLE) {
+            log("🚀 Already joining '${spec.name}'. Skipping duplicate start.")
+            return
+        }
+
         val prefs = getSharedPreferences("LMS_PREFS", Context.MODE_PRIVATE)
         if (prefs.getString("USERNAME", "").isNullOrEmpty()) {
             log("⚠️ No credentials for '${spec.name}'!"); return
@@ -473,7 +491,6 @@ class AutoJoinService : Service() {
             else "https://lmshome.aut.ac.ir/"
         )
     }
-
     private fun testLogin() {
         activeSpec = null; casInjectedForUrl = null; isDiscovering = false
         flowState = FlowState.NAVIGATING_TO_HOME
@@ -703,6 +720,7 @@ class AutoJoinService : Service() {
     //  WebViewClient
     // =========================================================================
 
+
     private inner class LmsWebViewClient : WebViewClient() {
         override fun shouldOverrideUrlLoading(
             view: WebView, req: WebResourceRequest
@@ -721,13 +739,38 @@ class AutoJoinService : Service() {
             log("⚠️ SSL: ${error.primaryError}"); handler.proceed()
         }
 
+        // Catches physical network drops (e.g., ERR_CONNECTION_TIMED_OUT, ERR_INTERNET_DISCONNECTED)
         override fun onReceivedError(
             view: WebView, req: WebResourceRequest, err: WebResourceError
         ) {
-            if (req.isForMainFrame) log("❌ Error: ${err.description}")
+            if (req.isForMainFrame) {
+                val desc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) err.description else "Network Error"
+                log("❌ Network Error: $desc")
+
+                // If the app isn't idle, wait 30 seconds and try reloading to recover automatically
+                if (flowState != FlowState.IDLE) {
+                    log("🔄 Connection lost. Retrying in 30 seconds...")
+                    scheduleReload(30_000L)
+                }
+            }
+        }
+
+        // Catches server-side errors (e.g., 502 Bad Gateway, 504 Gateway Timeout)
+        override fun onReceivedHttpError(
+            view: WebView, req: WebResourceRequest, errorResponse: WebResourceResponse
+        ) {
+            if (req.isForMainFrame) {
+                val code = errorResponse.statusCode
+                log("⚠️ Server HTTP Error: $code")
+
+                // If the university server crashes (5xx errors), wait and retry
+                if (code >= 500 && flowState != FlowState.IDLE) {
+                    log("🔄 Server is down/overloaded. Retrying in 30 seconds...")
+                    scheduleReload(30_000L)
+                }
+            }
         }
     }
-
     // =========================================================================
     //  URL helpers
     // =========================================================================
