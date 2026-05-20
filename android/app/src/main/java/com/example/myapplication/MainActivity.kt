@@ -45,9 +45,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnCancel: MaterialButton
     private lateinit var btnDiscoverClasses: MaterialButton
     private lateinit var btnManageClasses: MaterialButton
+    private lateinit var btnGoToClass: MaterialButton
 
-    // Discovery progress UI
-    private lateinit var discoveryProgressSection: LinearLayout
+    // Discovery progress UI — now a MaterialCardView, use View as the common base type
+    private lateinit var discoveryProgressSection: View
     private lateinit var tvDiscoveryProgress: TextView
     private lateinit var btnCancelDiscovery: MaterialButton
 
@@ -128,13 +129,13 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // Apply window insets to the inner LinearLayout so content respects status/nav bars
         val mainLayout = findViewById<LinearLayout>(R.id.main)
         ViewCompat.setOnApplyWindowInsetsListener(mainLayout) { v, insets ->
             val sys = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
-            val pad = (8 * resources.displayMetrics.density).toInt()
-            v.setPadding(sys.left + pad, sys.top + pad, sys.right + pad, sys.bottom + pad)
+            v.setPadding(v.paddingLeft, sys.top, v.paddingRight, sys.bottom)
             insets
         }
 
@@ -151,6 +152,7 @@ class MainActivity : AppCompatActivity() {
         btnCancel = findViewById(R.id.btnCancel)
         btnDiscoverClasses = findViewById(R.id.btnDiscoverClasses)
         btnManageClasses = findViewById(R.id.btnManageClasses)
+        btnGoToClass = findViewById(R.id.btnGoToClass)
         discoveryProgressSection = findViewById(R.id.discoveryProgressSection)
         tvDiscoveryProgress = findViewById(R.id.tvDiscoveryProgress)
         btnCancelDiscovery = findViewById(R.id.btnCancelDiscovery)
@@ -166,9 +168,43 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, R.string.both_fields_required, Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            getSharedPreferences("LMS_PREFS", Context.MODE_PRIVATE)
-                .edit().putString("USERNAME", user).putString("PASSWORD", pass).apply()
-            Toast.makeText(this, R.string.credentials_saved, Toast.LENGTH_SHORT).show()
+
+            val prefs = getSharedPreferences("LMS_PREFS", Context.MODE_PRIVATE)
+
+            val oldUser = prefs.getString("USERNAME", "") ?: ""
+            val oldPass = prefs.getString("PASSWORD", "") ?: ""
+
+            prefs.edit()
+                .putString("USERNAME", user)
+                .putString("PASSWORD", pass)
+                .apply()
+
+            // If credentials changed, reset the LMS web session
+            if (oldUser != user || oldPass != pass) {
+                // 1. Reset the existing web session (clears cookies, cache, state)
+                val resetIntent = Intent(this, AutoJoinService::class.java).apply {
+                    putExtra("RESET_SESSION", true)
+                }
+                startService(resetIntent)
+
+                // 2. After a short delay, start discovery for the new user's classes
+                //    (delay gives the WebView time to finish clearing before loading new URLs)
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    val discoverIntent = Intent(this, AutoJoinService::class.java).apply {
+                        putExtra("DISCOVER_CLASSES", true)
+                    }
+                    startService(discoverIntent)
+                    discoveryProgressSection.visibility = View.VISIBLE
+                    btnDiscoverClasses.isEnabled = false
+                }, 1500L)
+
+                Toast.makeText(
+                    this,
+                    "اطلاعات ورود ذخیره شد — در حال جستجوی کلاس‌های جدید...",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+
             hideCredentialInputs()
             updateCredentialStatusDisplay()
         }
@@ -185,7 +221,6 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            // Check if already running
             if (autoJoinService?.isDiscovering == true) {
                 Toast.makeText(this, R.string.discovery_in_progress, Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
@@ -216,6 +251,29 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, ManageClassesActivity::class.java))
         }
 
+        // ── Go To Class (برو کلاس) ──────────────────────────────────────────
+        btnGoToClass.setOnClickListener {
+            val prefs = getSharedPreferences("LMS_PREFS", Context.MODE_PRIVATE)
+            if (prefs.getString("USERNAME", "").isNullOrEmpty() ||
+                prefs.getString("PASSWORD", "").isNullOrEmpty()
+            ) {
+                Toast.makeText(this, "ابتدا اطلاعات ورود را وارد کنید", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            if (autoJoinService?.isDiscovering == true) {
+                Toast.makeText(this, "لطفاً صبر کنید تا اکتشاف تمام شود", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            Toast.makeText(this, "در حال بررسی برنامه کلاسی...", Toast.LENGTH_SHORT).show()
+
+            val intent = Intent(this, AutoJoinService::class.java).apply {
+                putExtra("GO_TO_CLASS", true)
+            }
+            startService(intent)
+        }
+
         // First launch prompt
         val prefs = getSharedPreferences("LMS_PREFS", Context.MODE_PRIVATE)
         if (prefs.getString("USERNAME", "").isNullOrEmpty() ||
@@ -226,6 +284,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         checkOverlayPermissionAndStartService()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Refresh credential display whenever the activity comes back to the foreground
+        updateCredentialStatusDisplay()
     }
 
     // ── Credential helpers ───────────────────────────────────────────────────
@@ -247,16 +311,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showCredentialInputs(loadSaved: Boolean = true) {
+        val prefs = getSharedPreferences("LMS_PREFS", Context.MODE_PRIVATE)
         if (loadSaved) {
-            val prefs = getSharedPreferences("LMS_PREFS", Context.MODE_PRIVATE)
-            etUsername.setText(prefs.getString("USERNAME", ""))
-            etPassword.setText(prefs.getString("PASSWORD", ""))
+            etUsername.setText(prefs.getString("USERNAME", "") ?: "")
+            etPassword.setText(prefs.getString("PASSWORD", "") ?: "")
         } else {
             etUsername.setText("")
             etPassword.setText("")
         }
         credentialInputSection.visibility = View.VISIBLE
         btnShowCredentials.visibility = View.GONE
+        etUsername.requestFocus()
     }
 
     private fun hideCredentialInputs() {

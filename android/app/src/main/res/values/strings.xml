@@ -41,9 +41,11 @@
     <string name="discovery_complete">✅ Found %1$d class(es)! Open Manage Classes to review.</string>
     <string name="discovery_error">❌ Discovery failed. Check logs.</string>
     <string name="discovery_cancelled">Discovery cancelled.</string>
+    <string name="discovery_scanning">Scanning for classes…</string>
     <string name="discovery_progress">Scanning %1$d of %2$d courses…</string>
     <string name="discovery_in_progress">Discovery already in progress!</string>
     <string name="discovery_running_bg">Discovery will continue in background.</string>
+    <string name="btn_cancel_discovery">Cancel Discovery</string>
 
     <!-- Manage classes screen -->
     <string name="manage_classes_title">📚 My Classes</string>
